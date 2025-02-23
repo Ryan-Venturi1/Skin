@@ -1,0 +1,53 @@
+body {
+    margin: 0;
+    padding: 20px;
+    font-family: -apple-system, sans-serif;
+}
+.container {
+    max-width: 600px;
+    margin: 0 auto;
+}
+.video-container {
+    position: relative;
+    width: 100%;
+    background: black;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 20px;
+}
+video {
+    width: 100%;
+    display: block;
+}
+button {
+    width: 100%;
+    padding: 12px;
+    background: #0070f3;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+}
+button:disabled {
+    background: #ccc;
+}
+#results {
+    margin-top: 20px;
+    padding: 20px;
+    background: #f5f5f5;
+    border-radius: 8px;
+}
+.history-item {
+    background: white;
+    padding: 15px;
+    margin: 10px 0;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.history-img {
+    width: 100px;
+    height: 100px;
+    object-fit: cover;
+    border-radius: 4px;
+}
