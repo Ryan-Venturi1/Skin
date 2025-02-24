@@ -3,6 +3,7 @@ let model;
 let guidanceInterval;
 let captureReady = false;
 
+
 // Load the TensorFlow.js model from the "model" folder
 async function loadModel() {
   try {
@@ -20,7 +21,6 @@ async function loadModel() {
     document.getElementById('model-status').classList.add('status-error');
   }
 }
-
 // Preprocess the image: resize to 224x224, normalize pixel values, and add a batch dimension
 function preprocessImage(imageElement) {
   return tf.browser.fromPixels(imageElement)

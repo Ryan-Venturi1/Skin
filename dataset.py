@@ -3,17 +3,17 @@ import requests
 import zipfile
 import io
 from tqdm import tqdm
+import glob
 
 # Configuration
 OUTPUT_DIR = 'isic_dataset'
 TEMP_DIR = 'temp_downloads'
-
+chunk_size = 1024 * 1024
 # Create directories
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Direct download URLs for ISIC datasets
-# These are publicly available datasets
 DATASETS = [
     {
         "name": "ISIC_2018_Task3_Training",
@@ -25,8 +25,11 @@ DATASETS = [
 
 def download_file(url, output_path):
     """Download a file from URL to the specified path with progress bar"""
+    if os.path.exists(output_path):
+        print(f"File already exists: {output_path}")
+        return output_path
+        
     print(f"Downloading {url}...")
-    
     response = requests.get(url, stream=True)
     total_size = int(response.headers.get('content-length', 0))
     
@@ -37,7 +40,7 @@ def download_file(url, output_path):
         unit_scale=True,
         unit_divisor=1024,
     ) as bar:
-        for chunk in response.iter_content(chunk_size=8192):
+        for chunk in response.iter_content(chunk_size=chunk_size):
             size = f.write(chunk)
             bar.update(size)
     
@@ -73,6 +76,18 @@ def process_dataset():
     os.makedirs(metadata_extract_path, exist_ok=True)
     extract_zip(metadata_zip_path, metadata_extract_path)
     
+    # Find the ground truth CSV file
+    csv_pattern = os.path.join(metadata_extract_path, '**', '*.csv')
+    csv_files = glob.glob(csv_pattern, recursive=True)
+    if not csv_files:
+        print(f"No CSV files found in {metadata_extract_path}")
+        print("Contents of the directory:")
+        print(os.listdir(metadata_extract_path))
+        raise FileNotFoundError("Ground truth CSV file not found")
+
+    ground_truth_path = csv_files[0]
+    print(f"Found ground truth file: {ground_truth_path}")
+    
     # Process ground truth
     print("Organizing images by diagnosis...")
     import csv
@@ -87,9 +102,6 @@ def process_dataset():
         "DF": "dermatofibroma",
         "VASC": "vascular_lesion"
     }
-    
-    # Read ground truth file
-    ground_truth_path = os.path.join(metadata_extract_path, "ISIC2018_Task3_Training_GroundTruth.csv")
     
     # Create class directories
     class_dirs = {}
@@ -113,7 +125,7 @@ def process_dataset():
             
             if best_class:
                 image_id = row['image']
-                source_path = os.path.join(image_extract_path, f"{image_id}.jpg")
+                source_path = os.path.join(image_extract_path, "ISIC2018_Task3_Training_input", f"{image_id}.jpg")
                 if os.path.exists(source_path):
                     target_dir = class_dirs[best_class]
                     target_path = os.path.join(target_dir, f"{image_id}.jpg")
