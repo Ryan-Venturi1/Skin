@@ -1,23 +1,34 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Skin Analysis</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="script.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skin Analysis App</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <div class="video-container">
-            <video id="video" autoplay playsinline></video>
-        </div>
-        <button id="capture">Capture Image</button>
-        <canvas id="canvas" style="display:none"></canvas>
-        <div id="results"></div>
+  <div class="container">
+    <h1>Skin Analysis App</h1>
+    <div class="video-container">
+      <video id="video" autoplay playsinline></video>
+      <div id="angle-banner" class="angle-banner">
+        Adjust camera: <span id="angle-suggestion">Align properly</span>
+      </div>
     </div>
+    <button id="capture">Capture Image</button>
+    <canvas id="canvas" style="display:none"></canvas>
+    <div id="results"></div>
+    <div id="logging"></div>
+    <div class="disclaimer">
+      <p><strong>Disclaimer:</strong> This tool is not a substitute for professional medical advice. It is for preliminary analysis only. Please consult a healthcare professional for an accurate diagnosis.</p>
+    </div>
+  </div>
 
-
+  <!-- Load TensorFlow.js from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <!-- Load angle tracking module -->
+  <script src="angleTracking.js"></script>
+  <!-- Load main script -->
+  <script src="script.js"></script>
 </body>
 </html>
