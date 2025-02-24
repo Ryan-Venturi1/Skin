@@ -22160,3 +22160,4 @@ skin_env/lib/python3.9/site-packages/orbax/checkpoint/checkpoint_args.py
 skin_env/lib/python3.9/site-packages/orbax/checkpoint/async_checkpointer.py
 skin_env/lib/python3.9/site-packages/orbax/checkpoint/args.py
 skin_env/lib/python3.9/site-packages/orbax/checkpoint/aggregate_handlers.py
+temp_downloads/ISIC_2018_Task3_Training_images.zip
