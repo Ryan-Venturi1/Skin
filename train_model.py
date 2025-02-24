@@ -1,12 +1,18 @@
 import os
 import random
 import tensorflow as tf
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout
-from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing.image import ImageDataGenerator  # This one is still valid
+from tensorflow.keras.applications import MobileNetV2  # This one is still valid
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout  # This one is still valid
+from tensorflow.keras.models import Model  # This one is still valid
+from tensorflow.keras.optimizers import Adam  # For newer versions, might need legacy optimizer
 
+
+# Load the model (if needed)
+model = tf.keras.models.load_model('skin_analysis_model.h5')
+
+# Save the complete model again
+model.save('skin_analysis_model_full.h5', save_format='h5')
 # Configuration - easily adjustable parameters
 SEED = 42
 IMG_HEIGHT, IMG_WIDTH = 224, 224
