@@ -3,24 +3,71 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Skin Analysis App</title>
+  <title>Advanced Skin Analysis App</title>
   <link rel="stylesheet" href="style.css">
+  <!-- Preconnect to CDN -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
 </head>
 <body>
   <div class="container">
-    <h1>Skin Analysis App</h1>
+    <header>
+      <h1>Skin Analysis App</h1>
+      <div class="status-bar">
+        <div class="status-item">
+          <span>Camera:</span> <span id="camera-status">Initializing...</span>
+        </div>
+        <div class="status-item">
+          <span>Model:</span> <span id="model-status">Loading...</span>
+        </div>
+      </div>
+    </header>
+    
     <div class="video-container">
       <video id="video" autoplay playsinline></video>
-      <div id="angle-banner" class="angle-banner">
-        Adjust camera: <span id="angle-suggestion">Align properly</span>
+      
+      <!-- Focus indicator (Apple FaceID style) -->
+      <div id="focus-indicator" class="focus-indicator"></div>
+      
+      <!-- Guidance UI -->
+      <div id="guidance-container" class="guidance-container">
+        <div id="guidance-message" class="guidance-message">Aligning camera...</div>
+        <div class="guidance-progress">
+          <div id="guidance-progress-bar" class="guidance-progress-bar" style="width: 0%"></div>
+        </div>
+        <div class="guidance-icons">
+          <div class="guidance-icon" id="icon-center">◉</div>
+          <div class="guidance-icon" id="icon-light">☀</div>
+          <div class="guidance-icon" id="icon-distance">↔</div>
+          <div class="guidance-icon" id="icon-hold">✓</div>
+        </div>
       </div>
     </div>
-    <button id="capture">Capture Image</button>
+    
+    <div class="button-container">
+      <button id="capture">Capture Image</button>
+      <button id="switch-camera" class="secondary-button">Switch Camera</button>
+    </div>
+    
     <canvas id="canvas" style="display:none"></canvas>
-    <div id="results"></div>
-    <div id="logging"></div>
+    
+    <div id="results">
+      <h2>Analysis Results</h2>
+      <p class="no-results">No analyses yet. Capture an image to begin.</p>
+    </div>
+    
+    <div class="accordion">
+      <div class="accordion-header" id="toggle-log">
+        <h3>Debug Logs</h3>
+        <span class="accordion-icon">+</span>
+      </div>
+      <div id="logging" class="accordion-content">
+        <p>[System] Initializing app...</p>
+      </div>
+    </div>
+    
     <div class="disclaimer">
       <p><strong>Disclaimer:</strong> This tool is not a substitute for professional medical advice. It is for preliminary analysis only. Please consult a healthcare professional for an accurate diagnosis.</p>
+      <p>This app uses machine learning trained on the ISIC (International Skin Imaging Collaboration) Archive dataset to provide preliminary skin lesion analysis.</p>
     </div>
   </div>
 
