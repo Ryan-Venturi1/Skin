@@ -325,6 +325,7 @@ function startGuidanceSystem() {
 }
 
 // Capture an image, run analysis, and display results
+// Updated risk assessment with higher sensitivity for cancer detection
 async function captureImage() {
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
@@ -357,7 +358,7 @@ async function captureImage() {
     // Run inference on the captured image
     const analysisResults = await analyzeImage(img);
     
-    // Format for risk assessment
+    // Format for risk assessment with ENHANCED CANCER SENSITIVITY
     // Helper function to get categories
     const getCategoryScore = (category) => {
       let score = 0;
@@ -380,39 +381,73 @@ async function captureImage() {
       // Sum up confidences for the relevant classes
       for (const result of analysisResults) {
         if (classesToCheck.includes(result.label)) {
-          score += result.confidence;
+          // Apply boosting factor for melanoma to improve sensitivity
+          if (result.label === 'melanoma') {
+            score += result.confidence * 1.4; // 40% boost to melanoma scores
+          } else if (malignantClasses.includes(result.label)) {
+            score += result.confidence * 1.2; // 20% boost to other cancers
+          } else {
+            score += result.confidence;
+          }
         }
       }
       
-      return score;
+      // Cap at 1.0 maximum
+      return Math.min(1.0, score);
     };
     
+    // Get category scores with our enhanced sensitivity
     const malignantScore = getCategoryScore('malignant');
     const benignScore = getCategoryScore('benign');
     const precancerScore = getCategoryScore('precancer');
     
-    // Add a warning if the analysis suggests concern
+    // IMPROVED WARNING SYSTEM - Lower thresholds and more detailed messages
+    // Any malignant pattern above 20% now generates a warning
     let warningMessage = "";
-    if (malignantScore > 0.3) {
-      warningMessage = `<p class="warning">Warning: Elevated risk score detected. Please consult a dermatologist promptly.</p>`;
-    } else if (precancerScore > 0.5) {
-      warningMessage = `<p class="warning">Warning: Potential pre-cancerous features detected. Consider consulting a dermatologist.</p>`;
+    let recommendationMessage = "";
+    
+    if (malignantScore > 0.6) {
+      warningMessage = `<p class="warning">HIGH RISK: Strong indicators of potential skin cancer detected (${(malignantScore * 100).toFixed(1)}% confidence).</p>`;
+      recommendationMessage = `<p class="recommendation">Immediate dermatologist consultation strongly recommended. Save this image to share with your doctor.</p>`;
+    } else if (malignantScore > 0.2) {
+      warningMessage = `<p class="warning">MODERATE RISK: Some concerning features detected that should be evaluated (${(malignantScore * 100).toFixed(1)}% confidence).</p>`;
+      recommendationMessage = `<p class="recommendation">Consultation with a dermatologist recommended within the next 1-2 weeks.</p>`;
+    } else if (precancerScore > 0.3) {
+      warningMessage = `<p class="warning">ELEVATED RISK: Possible pre-cancerous features detected (${(precancerScore * 100).toFixed(1)}% confidence).</p>`;
+      recommendationMessage = `<p class="recommendation">Dermatologist evaluation recommended for proper assessment.</p>`;
+    } else {
+      recommendationMessage = `<p class="recommendation">Low risk profile. Continue with regular skin self-exams and annual skin checks.</p>`;
     }
     
-    // Create colored risk indicator
+    // Create colored risk indicator - more sensitive thresholds
     let riskColor = "#4CAF50"; // Green for low risk
-    if (malignantScore > 0.7) {
+    if (malignantScore > 0.4) {
       riskColor = "#F44336"; // Red for high risk
-    } else if (malignantScore > 0.3 || precancerScore > 0.5) {
+    } else if (malignantScore > 0.15 || precancerScore > 0.3) {
       riskColor = "#FF9800"; // Orange for medium risk
+    } else if (malignantScore > 0.05) {
+      riskColor = "#FFC107"; // Yellow for slight risk
+    }
+    
+    // Individual melanoma assessment - special handling due to severity
+    const melanomaPrediction = analysisResults.find(r => r.label === 'melanoma');
+    let melanomaAlert = "";
+    if (melanomaPrediction && melanomaPrediction.confidence > 0.15) {
+      melanomaAlert = `<div class="melanoma-alert">
+        <p><strong>Melanoma Indicators Present</strong></p>
+        <p>This image shows patterns consistent with melanoma at ${(melanomaPrediction.confidence * 100).toFixed(1)}% confidence level. 
+        Melanoma is a serious form of skin cancer and early detection is critical.</p>
+      </div>`;
     }
     
     // Create detail rows for top predictions
     const detailRows = analysisResults.slice(0, 5).map(result => {
       // Determine color based on classification
       let barColor = "#FF9800"; // Default/orange
-      if (['melanoma', 'basal_cell_carcinoma', 'squamous_cell_carcinoma'].includes(result.label)) {
-        barColor = "#F44336"; // Red for malignant
+      if (result.label === 'melanoma') {
+        barColor = "#D32F2F"; // Deep red for melanoma specifically
+      } else if (['basal_cell_carcinoma', 'squamous_cell_carcinoma'].includes(result.label)) {
+        barColor = "#F44336"; // Red for other malignant
       } else if (['nevus', 'seborrheic_keratosis', 'dermatofibroma', 'benign_keratosis'].includes(result.label)) {
         barColor = "#4CAF50"; // Green for benign
       } else if (result.label === 'actinic_keratosis') {
@@ -445,24 +480,26 @@ async function captureImage() {
         </div>
       </div>
       <div class="history-details">
+        ${melanomaAlert}
+        ${warningMessage}
+        ${recommendationMessage}
         <div class="result-details">
           ${detailRows}
         </div>
         <div class="summary-scores">
           <div class="summary-score">
             <span>Benign likelihood:</span>
-            <span class="score-value">${(benignScore * 100).toFixed(1)}%</span>
+            <span class="score-value" style="color: ${benignScore > 0.7 ? '#4CAF50' : '#555'}">${(benignScore * 100).toFixed(1)}%</span>
           </div>
           <div class="summary-score">
             <span>Malignant likelihood:</span>
-            <span class="score-value">${(malignantScore * 100).toFixed(1)}%</span>
+            <span class="score-value" style="color: ${malignantScore > 0.2 ? '#F44336' : '#555'}">${(malignantScore * 100).toFixed(1)}%</span>
           </div>
           <div class="summary-score">
             <span>Pre-cancer likelihood:</span>
-            <span class="score-value">${(precancerScore * 100).toFixed(1)}%</span>
+            <span class="score-value" style="color: ${precancerScore > 0.3 ? '#FF9800' : '#555'}">${(precancerScore * 100).toFixed(1)}%</span>
           </div>
         </div>
-        ${warningMessage}
       </div>
     `;
     
@@ -477,7 +514,6 @@ async function captureImage() {
     captureButton.textContent = 'Capture Image';
   };
 }
-
 // Add camera switching functionality
 function switchCamera() {
   const video = document.getElementById('video');

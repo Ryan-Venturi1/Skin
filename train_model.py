@@ -4,37 +4,36 @@ import json
 import tensorflow as tf
 import subprocess
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout, Input
+from tensorflow.keras.applications import EfficientNetB0  # Using more accurate model
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout, Input, BatchNormalization
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import ReduceLROnPlateau, ModelCheckpoint, EarlyStopping
 
-# Configuration - easily adjustable parameters
+# Enhanced configuration with better settings
 SEED = 42
 IMG_HEIGHT, IMG_WIDTH = 224, 224
 BATCH_SIZE = 32
-EPOCHS = 10
-DATASET_DIR = 'isic_dataset'  # Directory created by the API downloader script
-VALIDATION_SPLIT = 0.2  # 20% for validation
+EPOCHS = 30  # Increased epochs for better training
+DATASET_DIR = 'isic_dataset'
+VALIDATION_SPLIT = 0.15  # Reduced validation to have more training data
+LEARNING_RATE = 1e-4
+FINE_TUNE_LEARNING_RATE = 5e-5
 
 # Set random seeds for reproducibility
 random.seed(SEED)
 tf.random.set_seed(SEED)
+os.environ['PYTHONHASHSEED'] = str(SEED)
 
 print("Setting up data directories...")
 
-# Directory to store train/validation splits
 TRAIN_DIR = os.path.join(DATASET_DIR, 'train')
 VAL_DIR = os.path.join(DATASET_DIR, 'val')
 
-# Create directories if they don't exist
 os.makedirs(TRAIN_DIR, exist_ok=True)
 os.makedirs(VAL_DIR, exist_ok=True)
-
-# Make sure model directory exists
 os.makedirs('model', exist_ok=True)
 
-# Function to split data into train/validation sets
 def split_data_into_train_val():
     """
     Creates train and validation directories with class subdirectories
@@ -46,6 +45,12 @@ def split_data_into_train_val():
                   if os.path.isdir(os.path.join(DATASET_DIR, d)) 
                   and d not in ['train', 'val']]
     
+    if not class_dirs:
+        print("No class directories found! Please run dataset.py first.")
+        return False
+    
+    # Track class counts for balancing
+    class_counts = {}
     for class_dir in class_dirs:
         # Create class directory in train and val
         train_class_dir = os.path.join(TRAIN_DIR, class_dir)
@@ -57,6 +62,8 @@ def split_data_into_train_val():
         # Get all image files
         source_dir = os.path.join(DATASET_DIR, class_dir)
         image_files = [f for f in os.listdir(source_dir) if f.endswith('.jpg')]
+        
+        class_counts[class_dir] = len(image_files)
         
         # Skip if no images
         if not image_files:
@@ -93,159 +100,255 @@ def split_data_into_train_val():
                 except (OSError, NotImplementedError):
                     import shutil
                     shutil.copy2(src, dst)
+    
+    # Print class distribution
+    print("\nClass distribution:")
+    for cls, count in sorted(class_counts.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {cls}: {count} images")
+    
+    return True
 
-# Check if train/val split already exists
-if not os.listdir(TRAIN_DIR) or not os.listdir(VAL_DIR):
-    split_data_into_train_val()
-else:
-    print("Train/validation split already exists.")
-
-# Set up data generators with augmentation
-print("Setting up data generators...")
-train_datagen = ImageDataGenerator(
-    rescale=1./255,
-    rotation_range=20,
-    zoom_range=0.2,
-    horizontal_flip=True,
-    vertical_flip=True,  # Skin lesions can appear in any orientation
-    fill_mode='nearest'
-)
-
-# Only rescaling for validation
-val_datagen = ImageDataGenerator(rescale=1./255)
-
-print("Loading training data...")
-train_generator = train_datagen.flow_from_directory(
-    TRAIN_DIR,
-    target_size=(IMG_HEIGHT, IMG_WIDTH),
-    batch_size=BATCH_SIZE,
-    class_mode='categorical',
-    shuffle=True
-)
-
-print("Loading validation data...")
-validation_generator = val_datagen.flow_from_directory(
-    VAL_DIR,
-    target_size=(IMG_HEIGHT, IMG_WIDTH),
-    batch_size=BATCH_SIZE,
-    class_mode='categorical',
-    shuffle=False
-)
-
-# Determine number of classes dynamically
-num_classes = len(train_generator.class_indices)
-print(f"Training with {num_classes} classes: {train_generator.class_indices}")
-
-# Build model with explicit input layer
-print("Building MobileNetV2 model...")
-inputs = Input(shape=(IMG_HEIGHT, IMG_WIDTH, 3))
-base_model = MobileNetV2(
-    weights='imagenet',
-    include_top=False,
-    input_tensor=inputs
-)
-
-# Freeze the base model
-base_model.trainable = False
-
-# Add custom classification layers
-x = base_model.output
-x = GlobalAveragePooling2D()(x)
-x = Dropout(0.3)(x)
-x = Dense(128, activation='relu')(x)
-x = Dropout(0.3)(x)
-predictions = Dense(num_classes, activation='softmax')(x)
-
-# Create the final model
-model = Model(inputs=inputs, outputs=predictions)
-
-# Compile the model
-model.compile(
-    optimizer=Adam(learning_rate=1e-4),
-    loss='categorical_crossentropy',
-    metrics=['accuracy']
-)
-
-# Create callbacks
-checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-    'best_model.h5',
-    save_best_only=True,
-    monitor='val_accuracy',
-    mode='max'
-)
-
-early_stopping = tf.keras.callbacks.EarlyStopping(
-    monitor='val_accuracy',
-    patience=3,
-    restore_best_weights=True
-)
-
-# Train the model
-print(f"Starting training for {EPOCHS} epochs...")
-history = model.fit(
-    train_generator,
-    epochs=EPOCHS,
-    validation_data=validation_generator,
-    callbacks=[checkpoint_callback, early_stopping]
-)
-
-# Save the model in Keras format (Keras 3 compatible)
-print("Saving model in Keras format...")
-model.save('skin_model.keras')
-
-# Also save as HDF5 for backward compatibility
-print("Also saving model in HDF5 format...")
-model.save('skin_model.h5')
-
-# Create a model directory if it doesn't exist
-os.makedirs('model', exist_ok=True)
-
-# Write class indices to a JSON file for the web app
-class_indices = train_generator.class_indices
-# Invert the dictionary to map indices to class names
-class_names = {str(v): k for k, v in class_indices.items()}
-with open('model/class_names.json', 'w') as f:
-    json.dump(class_names, f)
-
-# Convert the model to TensorFlow.js format
-print("\nConverting model to TensorFlow.js format...")
-try:
-    result = subprocess.run(
-        ["tensorflowjs_converter", "--input_format=keras", "skin_model.keras", "model/"], 
-        check=True, 
-        capture_output=True, 
-        text=True
+# Enhanced data augmentation for better model generalization
+def create_data_generators():
+    """Create train and validation data generators with augmentation"""
+    
+    train_datagen = ImageDataGenerator(
+        rescale=1./255,
+        rotation_range=30,  # Increased rotation
+        width_shift_range=0.2,
+        height_shift_range=0.2,
+        zoom_range=0.3,  # Increased zoom
+        horizontal_flip=True,
+        vertical_flip=True,
+        shear_range=0.1,  # Added shear
+        brightness_range=[0.8, 1.2],  # Added brightness variation
+        fill_mode='nearest'
     )
-    print("Conversion successful! Output:")
-    print(result.stdout)
+
+    # Only rescaling for validation
+    val_datagen = ImageDataGenerator(rescale=1./255)
+
+    print("Loading training data...")
+    train_generator = train_datagen.flow_from_directory(
+        TRAIN_DIR,
+        target_size=(IMG_HEIGHT, IMG_WIDTH),
+        batch_size=BATCH_SIZE,
+        class_mode='categorical',
+        shuffle=True
+    )
+
+    print("Loading validation data...")
+    validation_generator = val_datagen.flow_from_directory(
+        VAL_DIR,
+        target_size=(IMG_HEIGHT, IMG_WIDTH),
+        batch_size=BATCH_SIZE,
+        class_mode='categorical',
+        shuffle=False
+    )
     
-    # List the converted files
-    print("\nConverted model files:")
-    for file in os.listdir('model'):
-        print(f" - {file}")
+    return train_generator, validation_generator
+
+def build_and_train_model(train_generator, validation_generator):
+    """Build and train the model with a two-phase approach"""
     
-except subprocess.CalledProcessError as e:
-    print("Conversion failed with error:")
-    print(e.stderr)
-    print("\nTrying alternate conversion method...")
+    # Determine number of classes dynamically
+    num_classes = len(train_generator.class_indices)
+    print(f"Training with {num_classes} classes: {train_generator.class_indices}")
+    
+    # Save class names immediately
+    class_indices = train_generator.class_indices
+    class_names = {str(v): k for k, v in class_indices.items()}
+    with open('model/class_names.json', 'w') as f:
+        json.dump(class_names, f)
+    
+    print("Building EfficientNetB0 model...")
+    # Initialize the base model with pre-trained weights
+    base_model = EfficientNetB0(
+        weights='imagenet',
+        include_top=False,
+        input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)
+    )
+    
+    # Freeze the base model initially
+    base_model.trainable = False
+    
+    # Add custom classification layers
+    inputs = Input(shape=(IMG_HEIGHT, IMG_WIDTH, 3))
+    x = base_model(inputs, training=False)
+    x = GlobalAveragePooling2D()(x)
+    x = BatchNormalization()(x)
+    x = Dense(256, activation='relu')(x)
+    x = Dropout(0.5)(x)  # Increased dropout for better generalization
+    x = Dense(128, activation='relu')(x)
+    x = Dropout(0.3)(x)
+    outputs = Dense(num_classes, activation='softmax')(x)
+    
+    # Create the initial model
+    model = Model(inputs=inputs, outputs=outputs)
+    
+    # Compile the initial model
+    model.compile(
+        optimizer=Adam(learning_rate=LEARNING_RATE),
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    
+    # Callbacks for training
+    callbacks = [
+        ModelCheckpoint(
+            'best_model_phase1.h5',
+            save_best_only=True,
+            monitor='val_accuracy',
+            mode='max'
+        ),
+        EarlyStopping(
+            monitor='val_accuracy',
+            patience=5,
+            restore_best_weights=True
+        ),
+        ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=3,
+            min_lr=1e-6
+        )
+    ]
+    
+    # Phase 1: Train only the top layers
+    print("Phase 1: Training top layers...")
+    history_phase1 = model.fit(
+        train_generator,
+        epochs=10,  # Fewer epochs for initial phase
+        validation_data=validation_generator,
+        callbacks=callbacks
+    )
+    
+    # Load the best weights from phase 1
+    model.load_weights('best_model_phase1.h5')
+    
+    # Phase 2: Fine-tune the model by unfreezing some layers
+    print("\nPhase 2: Fine-tuning the model...")
+    
+    # Unfreeze the top layers of the base model
+    base_model.trainable = True
+    
+    # Freeze the bottom layers and unfreeze the top layers
+    # Typically we unfreeze the last 20-30% of the layers
+    for layer in base_model.layers[:-20]:  # Keep bottom layers frozen
+        layer.trainable = False
+    
+    # Recompile with lower learning rate
+    model.compile(
+        optimizer=Adam(learning_rate=FINE_TUNE_LEARNING_RATE),
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    
+    # Updated callbacks for phase 2
+    callbacks = [
+        ModelCheckpoint(
+            'best_model_phase2.h5',
+            save_best_only=True,
+            monitor='val_accuracy',
+            mode='max'
+        ),
+        EarlyStopping(
+            monitor='val_accuracy',
+            patience=8,  # More patience for fine-tuning
+            restore_best_weights=True
+        ),
+        ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.2,
+            patience=4,
+            min_lr=1e-7
+        )
+    ]
+    
+    # Train with unfrozen layers
+    history_phase2 = model.fit(
+        train_generator,
+        epochs=EPOCHS,
+        validation_data=validation_generator,
+        callbacks=callbacks,
+        initial_epoch=len(history_phase1.history['loss'])  # Continue from phase 1
+    )
+    
+    # Load the best weights from phase 2
+    model.load_weights('best_model_phase2.h5')
+    
+    return model
+
+def save_model(model):
+    """Save the model in multiple formats"""
+    
+    print("Saving model in Keras format...")
+    model.save('skin_model.keras')
+    
+    # Also save as HDF5 for backward compatibility
+    print("Also saving model in HDF5 format...")
+    model.save('skin_model.h5')
+    print("Creating explicit model.json with input shape...")
+    model_json = model.to_json()
+    with open('model/model.json', 'w') as f:
+        f.write(model_json)
+
+    # Improve conversion settings
+    converter_args = [
+        "tensorflowjs_converter",
+        "--input_format=keras",
+        "--output_format=tfjs_layers_model",
+        "--weight_shard_size_bytes=4194304",
+        "--control_flow_v2=True",
+        "skin_model.h5",
+        "model/"
+    ]
+    # Convert the model to TensorFlow.js format
+    print("\nConverting model to TensorFlow.js format...")
     try:
         result = subprocess.run(
-            ["tensorflowjs_converter", "--input_format=keras", "skin_model.h5", "model/"], 
+            converter_args,
             check=True, 
             capture_output=True, 
             text=True
         )
-        print("Alternate conversion successful! Output:")
-        print(result.stdout)
-    except Exception as e2:
-        print("Both conversion methods failed. Please run the conversion manually with:")
-        print("tensorflowjs_converter --input_format=keras skin_model.keras model/")
-        print("OR")
-        print("tensorflowjs_converter --input_format=keras skin_model.h5 model/")
-except FileNotFoundError:
-    print("tensorflowjs_converter not found. Please install it with:")
-    print("pip install tensorflowjs")
-    print("\nAfter installation, run the conversion manually with:")
-    print("tensorflowjs_converter --input_format=keras skin_model.keras model/")
+        print("Conversion successful!")
+        
+    except subprocess.CalledProcessError as e:
+        print("Conversion failed with error:")
+        print(e.stderr)
+        print("\nTrying alternate conversion method...")
+        try:
+            result = subprocess.run(
+                ["tensorflowjs_converter", "--input_format=keras", "skin_model.h5", "model/"], 
+                check=True, 
+                capture_output=True, 
+                text=True
+            )
+            print("Alternate conversion successful!")
+        except Exception as e2:
+            print("Both conversion methods failed. Please run the conversion manually.")
+    except FileNotFoundError:
+        print("tensorflowjs_converter not found. Please install it with:")
+        print("pip install tensorflowjs")
 
-print("\nTraining and conversion complete!")
+if __name__ == "__main__":
+    # First, ensure we have the train/val split
+    if not os.listdir(TRAIN_DIR) or not os.listdir(VAL_DIR):
+        success = split_data_into_train_val()
+        if not success:
+            print("Error creating train/val split. Exiting.")
+            exit(1)
+    else:
+        print("Train/validation split already exists.")
+    
+    # Create data generators
+    train_generator, validation_generator = create_data_generators()
+    
+    # Build and train the model
+    model = build_and_train_model(train_generator, validation_generator)
+    
+    # Save the model
+    save_model(model)
+    
+    print("\nTraining and conversion complete!")
