@@ -5,64 +5,101 @@ let guidanceInterval;
 let captureReady = false;
 
 // Load the TensorFlow.js model
-async function loadModel() {
-  try {
-    // Load model from the "model" folder
-    model = await tf.loadLayersModel('model/model.json');
-    logEvent("Model loaded successfully");
-    
-    // Log model input shape for debugging
-    console.log("Model input shape:", model.inputs[0].shape);
-    logEvent(`Model input shape: ${model.inputs[0].shape}`);
-    
-    // Load class names
-    try {
-      const response = await fetch('model/class_names.json');
-      classNames = await response.json();
-      logEvent("Class names loaded: " + Object.values(classNames).join(", "));
-    } catch (error) {
-      logEvent("Warning: Could not load class names: " + error.message);
-    }
-    
-    // Update UI to show model is ready
-    document.getElementById('model-status').textContent = 'Ready';
-    document.getElementById('model-status').classList.add('status-ready');
-  } catch (error) {
-    logEvent("Error loading model: " + error.message);
-    document.getElementById('model-status').textContent = 'Error';
-    document.getElementById('model-status').classList.add('status-error');
-  }
-}
+// Model loading fix - place this at the top of your script.js
 
-// Preprocess image for the model
-function preprocessImage(imageElement) {
-  return tf.tidy(() => {
-    // Get the expected input shape from the model
-    let inputHeight = 224;
-    let inputWidth = 224;
-    
+// Fix input shape issue
+async function loadModelWithFix() {
     try {
-      // Get shape from model if available
-      if (model && model.inputs && model.inputs[0].shape.length >= 3) {
-        // Safely extract dimensions, using defaults if unavailable
-        inputHeight = model.inputs[0].shape[1] || 224;
-        inputWidth = model.inputs[0].shape[2] || 224;
+      // First try standard loading
+      const model = await tf.loadLayersModel('model/model.json');
+      console.log("Model loaded successfully");
+      return model;
+    } catch (error) {
+      console.error("Error loading model:", error.message);
+      
+      // Try alternative approach for models with missing shape
+      try {
+        console.log("Attempting alternative loading method...");
+        
+        // Create a placeholder model with correct input shape
+        const inputShape = [null, 224, 224, 3]; // Standard image input shape
+        
+        // Add a preprocessing layer that ensures correct shape
+        const fixedModel = await tf.loadLayersModel('model/model.json', {
+          strict: false
+        });
+        
+        // Wrap the model with a shape-fixing function
+        const wrappedModel = {
+          predict: function(input) {
+            // Ensure input has correct shape
+            let processedInput = input;
+            if (input.shape[1] !== 224 || input.shape[2] !== 224) {
+              processedInput = tf.image.resizeBilinear(input, [224, 224]);
+            }
+            return fixedModel.predict(processedInput);
+          },
+          dispose: function() {
+            return fixedModel.dispose();
+          }
+        };
+        
+        console.log("Alternative model loading successful");
+        return wrappedModel;
+      } catch (fallbackError) {
+        console.error("Alternative loading also failed:", fallbackError.message);
+        throw new Error("Could not load model after multiple attempts");
       }
-      logEvent(`Using input dimensions: ${inputWidth}x${inputHeight}`);
-    } catch (e) {
-      logEvent(`Using default dimensions: 224x224 (${e.message})`);
     }
-    
-    // Convert image to tensor, resize to expected input size, normalize
-    const tensor = tf.browser.fromPixels(imageElement)
-      .resizeNearestNeighbor([inputHeight, inputWidth])
-      .toFloat()
-      .div(tf.scalar(255.0))
-      .expandDims();
-    
-    return tensor;
-  });
-}
+  }
+  
+  // Replace your loadModel function with this one
+  async function loadModel() {
+    try {
+      // Use the fixed loading function
+      model = await loadModelWithFix();
+      
+      // Log model info for debugging
+      if (model.inputs) {
+        console.log("Model input shape:", model.inputs[0].shape);
+        logEvent(`Model input shape: ${JSON.stringify(model.inputs[0].shape)}`);
+      } else {
+        console.log("Using wrapped model with fixed input shape [null, 224, 224, 3]");
+        logEvent("Using wrapped model with fixed input shape [null, 224, 224, 3]");
+      }
+      
+      // Load class names
+      try {
+        const response = await fetch('model/class_names.json');
+        classNames = await response.json();
+        logEvent("Class names loaded: " + Object.values(classNames).join(", "));
+      } catch (error) {
+        logEvent("Warning: Could not load class names: " + error.message);
+      }
+      
+      // Update UI to show model is ready
+      document.getElementById('model-status').textContent = 'Ready';
+      document.getElementById('model-status').classList.add('status-ready');
+    } catch (error) {
+      logEvent("Error loading model: " + error.message);
+      document.getElementById('model-status').textContent = 'Error';
+      document.getElementById('model-status').classList.add('status-error');
+    }
+  }
+  
+  // Update your preprocessImage function to this simplified version
+  function preprocessImage(imageElement) {
+    return tf.tidy(() => {
+      // Use standard image size of 224x224
+      const tensor = tf.browser.fromPixels(imageElement)
+        .resizeNearestNeighbor([224, 224])
+        .toFloat()
+        .div(tf.scalar(255.0))
+        .expandDims();
+      
+      return tensor;
+    });
+  }
 
 // Analyze image using the loaded model
 async function analyzeImage(imageElement) {
