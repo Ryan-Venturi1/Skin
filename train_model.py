@@ -3,16 +3,16 @@ import random
 import json
 import tensorflow as tf
 import subprocess
-from tensorflow.keras.preprocessing.image import ImageDataGenerator  # Use tensorflow.keras instead
-from keras.applications import MobileNetV2
-from keras.layers import GlobalAveragePooling2D, Dense, Dropout
-from keras.models import Model
-from keras.optimizers import Adam
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout, Input
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
 
 # Configuration - easily adjustable parameters
 SEED = 42
 IMG_HEIGHT, IMG_WIDTH = 224, 224
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 EPOCHS = 10
 DATASET_DIR = 'isic_dataset'  # Directory created by the API downloader script
 VALIDATION_SPLIT = 0.2  # 20% for validation
@@ -43,8 +43,8 @@ def split_data_into_train_val():
     
     # Get all diagnosis folders
     class_dirs = [d for d in os.listdir(DATASET_DIR) 
-                 if os.path.isdir(os.path.join(DATASET_DIR, d)) 
-                 and d not in ['train', 'val']]
+                  if os.path.isdir(os.path.join(DATASET_DIR, d)) 
+                  and d not in ['train', 'val']]
     
     for class_dir in class_dirs:
         # Create class directory in train and val
@@ -136,12 +136,13 @@ validation_generator = val_datagen.flow_from_directory(
 num_classes = len(train_generator.class_indices)
 print(f"Training with {num_classes} classes: {train_generator.class_indices}")
 
-# Build model
+# Build model with explicit input layer
 print("Building MobileNetV2 model...")
+inputs = Input(shape=(IMG_HEIGHT, IMG_WIDTH, 3))
 base_model = MobileNetV2(
     weights='imagenet',
     include_top=False,
-    input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)
+    input_tensor=inputs
 )
 
 # Freeze the base model
@@ -156,7 +157,7 @@ x = Dropout(0.3)(x)
 predictions = Dense(num_classes, activation='softmax')(x)
 
 # Create the final model
-model = Model(inputs=base_model.input, outputs=predictions)
+model = Model(inputs=inputs, outputs=predictions)
 
 # Compile the model
 model.compile(
