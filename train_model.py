@@ -1,18 +1,14 @@
 import os
 import random
+import json
 import tensorflow as tf
-from tensorflow.keras.preprocessing.image import ImageDataGenerator  # This one is still valid
-from tensorflow.keras.applications import MobileNetV2  # This one is still valid
-from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout  # This one is still valid
-from tensorflow.keras.models import Model  # This one is still valid
-from tensorflow.keras.optimizers import Adam  # For newer versions, might need legacy optimizer
+import subprocess
+from tensorflow.keras.preprocessing.image import ImageDataGenerator  # Use tensorflow.keras instead
+from keras.applications import MobileNetV2
+from keras.layers import GlobalAveragePooling2D, Dense, Dropout
+from keras.models import Model
+from keras.optimizers import Adam
 
-
-# Load the model (if needed)
-model = tf.keras.models.load_model('skin_analysis_model.h5')
-
-# Save the complete model again
-model.save('skin_analysis_model_full.h5', save_format='h5')
 # Configuration - easily adjustable parameters
 SEED = 42
 IMG_HEIGHT, IMG_WIDTH = 224, 224
@@ -34,6 +30,9 @@ VAL_DIR = os.path.join(DATASET_DIR, 'val')
 # Create directories if they don't exist
 os.makedirs(TRAIN_DIR, exist_ok=True)
 os.makedirs(VAL_DIR, exist_ok=True)
+
+# Make sure model directory exists
+os.makedirs('model', exist_ok=True)
 
 # Function to split data into train/validation sets
 def split_data_into_train_val():
@@ -189,11 +188,63 @@ history = model.fit(
     callbacks=[checkpoint_callback, early_stopping]
 )
 
-# Save the trained model
-print("Saving model...")
-model.save('skin_analysis_model.h5')
+# Save the model in Keras format (Keras 3 compatible)
+print("Saving model in Keras format...")
+model.save('skin_model.keras')
 
-# Print instructions for TensorFlow.js conversion
-print("\nTo convert the model to TensorFlow.js format, run:")
-print("tensorflowjs_converter --input_format=keras skin_analysis_model.h5 model/")
-print("\nTraining complete!")
+# Also save as HDF5 for backward compatibility
+print("Also saving model in HDF5 format...")
+model.save('skin_model.h5')
+
+# Create a model directory if it doesn't exist
+os.makedirs('model', exist_ok=True)
+
+# Write class indices to a JSON file for the web app
+class_indices = train_generator.class_indices
+# Invert the dictionary to map indices to class names
+class_names = {str(v): k for k, v in class_indices.items()}
+with open('model/class_names.json', 'w') as f:
+    json.dump(class_names, f)
+
+# Convert the model to TensorFlow.js format
+print("\nConverting model to TensorFlow.js format...")
+try:
+    result = subprocess.run(
+        ["tensorflowjs_converter", "--input_format=keras", "skin_model.keras", "model/"], 
+        check=True, 
+        capture_output=True, 
+        text=True
+    )
+    print("Conversion successful! Output:")
+    print(result.stdout)
+    
+    # List the converted files
+    print("\nConverted model files:")
+    for file in os.listdir('model'):
+        print(f" - {file}")
+    
+except subprocess.CalledProcessError as e:
+    print("Conversion failed with error:")
+    print(e.stderr)
+    print("\nTrying alternate conversion method...")
+    try:
+        result = subprocess.run(
+            ["tensorflowjs_converter", "--input_format=keras", "skin_model.h5", "model/"], 
+            check=True, 
+            capture_output=True, 
+            text=True
+        )
+        print("Alternate conversion successful! Output:")
+        print(result.stdout)
+    except Exception as e2:
+        print("Both conversion methods failed. Please run the conversion manually with:")
+        print("tensorflowjs_converter --input_format=keras skin_model.keras model/")
+        print("OR")
+        print("tensorflowjs_converter --input_format=keras skin_model.h5 model/")
+except FileNotFoundError:
+    print("tensorflowjs_converter not found. Please install it with:")
+    print("pip install tensorflowjs")
+    print("\nAfter installation, run the conversion manually with:")
+    print("tensorflowjs_converter --input_format=keras skin_model.keras model/")
+
+print("\nTraining and conversion complete!")

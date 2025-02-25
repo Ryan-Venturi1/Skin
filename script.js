@@ -1,36 +1,49 @@
-// Global variable for the TensorFlow.js model
+// Global variables
 let model;
+let classNames = {};
 let guidanceInterval;
 let captureReady = false;
 
-
-// Load the TensorFlow.js model from the "model" folder
+// Load the TensorFlow.js model
 async function loadModel() {
   try {
+    // Load model from the "model" folder
     model = await tf.loadLayersModel('model/model.json');
-    logEvent("Model loaded successfully.");
+    logEvent("Model loaded successfully");
+    
+    // Load class names
+    try {
+      const response = await fetch('model/class_names.json');
+      classNames = await response.json();
+      logEvent("Class names loaded: " + Object.values(classNames).join(", "));
+    } catch (error) {
+      logEvent("Warning: Could not load class names: " + error.message);
+    }
     
     // Update UI to show model is ready
     document.getElementById('model-status').textContent = 'Ready';
     document.getElementById('model-status').classList.add('status-ready');
   } catch (error) {
     logEvent("Error loading model: " + error.message);
-    
-    // Update UI to show model failed to load
     document.getElementById('model-status').textContent = 'Error';
     document.getElementById('model-status').classList.add('status-error');
   }
 }
-// Preprocess the image: resize to 224x224, normalize pixel values, and add a batch dimension
+
+// Preprocess image for the model
 function preprocessImage(imageElement) {
-  return tf.browser.fromPixels(imageElement)
-    .resizeNearestNeighbor([224, 224])
-    .toFloat()
-    .div(tf.scalar(255))
-    .expandDims();
+  return tf.tidy(() => {
+    // Convert image to tensor, resize to model input size, normalize
+    const tensor = tf.browser.fromPixels(imageElement)
+      .resizeNearestNeighbor([224, 224]) // Use the same size used during training
+      .toFloat()
+      .div(tf.scalar(255.0))
+      .expandDims();
+    return tensor;
+  });
 }
 
-// Analyze the image using the loaded model
+// Analyze image using the loaded model
 async function analyzeImage(imageElement) {
   // Show loading state
   document.getElementById('capture').textContent = 'Analyzing...';
@@ -38,30 +51,20 @@ async function analyzeImage(imageElement) {
 
   try {
     const tensor = preprocessImage(imageElement);
-    const predictions = model.predict(tensor);
-    const data = await predictions.data();
+    const predictions = await model.predict(tensor).data();
     
     // Clean up tensor to prevent memory leaks
     tensor.dispose();
-    predictions.dispose();
-
-    // Assume model outputs probabilities in the following order: [Cancer, Infected, Healthy]
-    // Update based on your actual ISIC model classes
-    const labels = ["Melanoma", "Basal Cell Carcinoma", "Squamous Cell Carcinoma", 
-                   "Actinic Keratosis", "Benign Keratosis", "Dermatofibroma", 
-                   "Vascular Lesion", "Healthy"];
     
-    let results = [];
-    for (let i = 0; i < data.length; i++) {
-      // Only include classes that exist in the model output
-      if (i < labels.length) {
-        results.push({ label: labels[i], confidence: data[i] });
-      }
-    }
+    // Map predictions to class names and confidences
+    const results = Array.from(predictions)
+      .map((confidence, index) => ({
+        label: classNames[index] || `Class ${index}`,
+        confidence: confidence
+      }))
+      .sort((a, b) => b.confidence - a.confidence);
     
-    // Sort results so the highest confidence is first
-    results.sort((a, b) => b.confidence - a.confidence);
-    logEvent(`Prediction: ${results[0].label} with confidence ${(results[0].confidence * 100).toFixed(2)}%`);
+    logEvent(`Top prediction: ${results[0].label} with confidence ${(results[0].confidence * 100).toFixed(2)}%`);
     
     // Reset button state
     document.getElementById('capture').textContent = 'Capture Image';
@@ -70,16 +73,13 @@ async function analyzeImage(imageElement) {
     return results;
   } catch (error) {
     logEvent("Error during analysis: " + error.message);
-    
-    // Reset button state in case of error
     document.getElementById('capture').textContent = 'Capture Image';
     document.getElementById('capture').disabled = false;
-    
     return [{ label: "Error", confidence: 0 }];
   }
 }
 
-// Log events to the #logging panel
+// Log events to the logging panel
 function logEvent(message) {
   const logDiv = document.getElementById('logging');
   const timestamp = new Date().toLocaleTimeString();
@@ -87,7 +87,7 @@ function logEvent(message) {
   logMessage.textContent = `[${timestamp}] ${message}`;
   logDiv.appendChild(logMessage);
   
-  // Limit the number of log messages to prevent overwhelming the UI
+  // Limit the number of log messages
   if (logDiv.children.length > 20) {
     logDiv.removeChild(logDiv.firstChild);
   }
@@ -96,7 +96,7 @@ function logEvent(message) {
 // Start the device camera
 async function startCamera() {
   try {
-    // Try to get the back camera if available (better for skin images)
+    // Try to get the back camera if available
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { 
         facingMode: 'environment',
@@ -111,6 +111,8 @@ async function startCamera() {
     // Wait for video to be ready
     video.onloadedmetadata = () => {
       logEvent("Camera started. Resolution: " + video.videoWidth + "x" + video.videoHeight);
+      document.getElementById('camera-status').textContent = 'Active';
+      document.getElementById('camera-status').classList.add('status-ready');
       
       // Start the guidance system once camera is ready
       startGuidanceSystem();
@@ -118,8 +120,6 @@ async function startCamera() {
   } catch (err) {
     alert('Camera error: ' + err.message);
     logEvent("Camera error: " + err.message);
-    
-    // Update UI to show camera failed
     document.getElementById('camera-status').textContent = 'Error';
     document.getElementById('camera-status').classList.add('status-error');
   }
@@ -178,7 +178,7 @@ function startGuidanceSystem() {
   }
   
   guidanceInterval = setInterval(updateGuidanceUI, 200);
-  logEvent("Guidance system started.");
+  logEvent("Guidance system started");
 }
 
 // Capture an image, run analysis, and display results
@@ -214,59 +214,73 @@ async function captureImage() {
     // Run inference on the captured image
     const analysisResults = await analyzeImage(img);
     
-    // Retrieve confidence scores for summary
-    // Make this robust in case some labels aren't found
-    const getMalignantScore = () => {
-      const melanoma = analysisResults.find(r => r.label === "Melanoma");
-      const bcc = analysisResults.find(r => r.label === "Basal Cell Carcinoma");
-      const scc = analysisResults.find(r => r.label === "Squamous Cell Carcinoma");
+    // Format for risk assessment
+    // Helper function to get categories
+    const getCategoryScore = (category) => {
+      let score = 0;
       
-      let totalMalignantScore = 0;
-      if (melanoma) totalMalignantScore += melanoma.confidence;
-      if (bcc) totalMalignantScore += bcc.confidence;
-      if (scc) totalMalignantScore += scc.confidence;
+      // Map categories to class names for your specific model
+      const malignantClasses = ['melanoma', 'basal_cell_carcinoma', 'squamous_cell_carcinoma'];
+      const benignClasses = ['nevus', 'seborrheic_keratosis', 'dermatofibroma', 'benign_keratosis'];
+      const precancerClasses = ['actinic_keratosis'];
       
-      return totalMalignantScore;
+      let classesToCheck = [];
+      
+      if (category === 'malignant') {
+        classesToCheck = malignantClasses;
+      } else if (category === 'benign') {
+        classesToCheck = benignClasses;
+      } else if (category === 'precancer') {
+        classesToCheck = precancerClasses;
+      }
+      
+      // Sum up confidences for the relevant classes
+      for (const result of analysisResults) {
+        if (classesToCheck.includes(result.label)) {
+          score += result.confidence;
+        }
+      }
+      
+      return score;
     };
     
-    const getBenignScore = () => {
-      const healthy = analysisResults.find(r => r.label === "Healthy");
-      const benignKeratosis = analysisResults.find(r => r.label === "Benign Keratosis");
-      const dermatofibroma = analysisResults.find(r => r.label === "Dermatofibroma");
-      
-      let totalBenignScore = 0;
-      if (healthy) totalBenignScore += healthy.confidence;
-      if (benignKeratosis) totalBenignScore += benignKeratosis.confidence;
-      if (dermatofibroma) totalBenignScore += dermatofibroma.confidence;
-      
-      return totalBenignScore;
-    };
-    
-    const malignantScore = getMalignantScore();
-    const benignScore = getBenignScore();
+    const malignantScore = getCategoryScore('malignant');
+    const benignScore = getCategoryScore('benign');
+    const precancerScore = getCategoryScore('precancer');
     
     // Add a warning if the analysis suggests concern
     let warningMessage = "";
     if (malignantScore > 0.3) {
       warningMessage = `<p class="warning">Warning: Elevated risk score detected. Please consult a dermatologist promptly.</p>`;
+    } else if (precancerScore > 0.5) {
+      warningMessage = `<p class="warning">Warning: Potential pre-cancerous features detected. Consider consulting a dermatologist.</p>`;
     }
     
     // Create colored risk indicator
     let riskColor = "#4CAF50"; // Green for low risk
     if (malignantScore > 0.7) {
       riskColor = "#F44336"; // Red for high risk
-    } else if (malignantScore > 0.3) {
+    } else if (malignantScore > 0.3 || precancerScore > 0.5) {
       riskColor = "#FF9800"; // Orange for medium risk
     }
     
-    // Create detail rows for all predictions
+    // Create detail rows for top predictions
     const detailRows = analysisResults.slice(0, 5).map(result => {
+      // Determine color based on classification
+      let barColor = "#FF9800"; // Default/orange
+      if (['melanoma', 'basal_cell_carcinoma', 'squamous_cell_carcinoma'].includes(result.label)) {
+        barColor = "#F44336"; // Red for malignant
+      } else if (['nevus', 'seborrheic_keratosis', 'dermatofibroma', 'benign_keratosis'].includes(result.label)) {
+        barColor = "#4CAF50"; // Green for benign
+      } else if (result.label === 'actinic_keratosis') {
+        barColor = "#FF9800"; // Orange for precancer
+      }
+      
       return `<div class="result-detail-row">
-        <span class="result-label">${result.label}</span>
+        <span class="result-label">${result.label.replace('_', ' ')}</span>
         <div class="result-bar-container">
           <div class="result-bar" style="width: ${(result.confidence * 100).toFixed(0)}%; 
-               background-color: ${result.label === "Healthy" ? "#4CAF50" : 
-               (result.label === "Melanoma" ? "#F44336" : "#FF9800")}">
+               background-color: ${barColor}">
           </div>
         </div>
         <span class="result-percent">${(result.confidence * 100).toFixed(1)}%</span>
@@ -281,7 +295,7 @@ async function captureImage() {
         <img src="${img.src}" class="history-img">
         <div class="history-meta">
           <div class="capture-time">${timestamp}</div>
-          <div class="primary-prediction">${analysisResults[0].label}</div>
+          <div class="primary-prediction">${analysisResults[0].label.replace('_', ' ')}</div>
           <div class="confidence-badge" style="background-color: ${riskColor}">
             ${(analysisResults[0].confidence * 100).toFixed(0)}% confidence
           </div>
@@ -300,12 +314,19 @@ async function captureImage() {
             <span>Malignant likelihood:</span>
             <span class="score-value">${(malignantScore * 100).toFixed(1)}%</span>
           </div>
+          <div class="summary-score">
+            <span>Pre-cancer likelihood:</span>
+            <span class="score-value">${(precancerScore * 100).toFixed(1)}%</span>
+          </div>
         </div>
         ${warningMessage}
       </div>
     `;
     
     // Add the new result at the top
+    if (resultsDiv.querySelector('.no-results')) {
+      resultsDiv.innerHTML = '';
+    }
     resultsDiv.insertBefore(historyItem, resultsDiv.firstChild);
     
     // Reset capture button
@@ -338,6 +359,20 @@ function switchCamera() {
   });
 }
 
+// Toggle debug logs display
+function toggleLogs() {
+  const loggingDiv = document.getElementById('logging');
+  const toggleIcon = document.querySelector('.accordion-icon');
+  
+  if (loggingDiv.style.display === 'none' || !loggingDiv.style.display) {
+    loggingDiv.style.display = 'block';
+    toggleIcon.textContent = '−';
+  } else {
+    loggingDiv.style.display = 'none';
+    toggleIcon.textContent = '+';
+  }
+}
+
 // Set up event listeners
 document.addEventListener('DOMContentLoaded', () => {
   // Add event listeners once DOM is fully loaded
@@ -347,9 +382,16 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('switch-camera').addEventListener('click', switchCamera);
   }
   
+  if (document.getElementById('toggle-log')) {
+    document.getElementById('toggle-log').addEventListener('click', toggleLogs);
+  }
+  
   // Initialize camera and load the model
   startCamera();
   loadModel();
+  
+  // Check browser compatibility
+  checkCompatibility();
 });
 
 // Check browser compatibility
@@ -381,6 +423,3 @@ function checkCompatibility() {
   
   return issues.length === 0;
 }
-
-// Check compatibility on load
-window.addEventListener('load', checkCompatibility);
