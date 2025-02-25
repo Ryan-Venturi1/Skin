@@ -11,6 +11,10 @@ async function loadModel() {
     model = await tf.loadLayersModel('model/model.json');
     logEvent("Model loaded successfully");
     
+    // Log model input shape for debugging
+    console.log("Model input shape:", model.inputs[0].shape);
+    logEvent(`Model input shape: ${model.inputs[0].shape}`);
+    
     // Load class names
     try {
       const response = await fetch('model/class_names.json');
@@ -33,12 +37,29 @@ async function loadModel() {
 // Preprocess image for the model
 function preprocessImage(imageElement) {
   return tf.tidy(() => {
-    // Convert image to tensor, resize to model input size, normalize
+    // Get the expected input shape from the model
+    let inputHeight = 224;
+    let inputWidth = 224;
+    
+    try {
+      // Get shape from model if available
+      if (model && model.inputs && model.inputs[0].shape.length >= 3) {
+        // Safely extract dimensions, using defaults if unavailable
+        inputHeight = model.inputs[0].shape[1] || 224;
+        inputWidth = model.inputs[0].shape[2] || 224;
+      }
+      logEvent(`Using input dimensions: ${inputWidth}x${inputHeight}`);
+    } catch (e) {
+      logEvent(`Using default dimensions: 224x224 (${e.message})`);
+    }
+    
+    // Convert image to tensor, resize to expected input size, normalize
     const tensor = tf.browser.fromPixels(imageElement)
-      .resizeNearestNeighbor([224, 224]) // Use the same size used during training
+      .resizeNearestNeighbor([inputHeight, inputWidth])
       .toFloat()
       .div(tf.scalar(255.0))
       .expandDims();
+    
     return tensor;
   });
 }
@@ -51,6 +72,11 @@ async function analyzeImage(imageElement) {
 
   try {
     const tensor = preprocessImage(imageElement);
+    
+    // Log tensor shape for debugging
+    const tensorShape = tensor.shape;
+    logEvent(`Input tensor shape: ${tensorShape}`);
+    
     const predictions = await model.predict(tensor).data();
     
     // Clean up tensor to prevent memory leaks
@@ -91,6 +117,9 @@ function logEvent(message) {
   if (logDiv.children.length > 20) {
     logDiv.removeChild(logDiv.firstChild);
   }
+  
+  // Also log to console for debugging
+  console.log(`[${timestamp}] ${message}`);
 }
 
 // Start the device camera
@@ -277,7 +306,7 @@ async function captureImage() {
       }
       
       return `<div class="result-detail-row">
-        <span class="result-label">${result.label.replace('_', ' ')}</span>
+        <span class="result-label">${result.label.replace(/_/g, ' ')}</span>
         <div class="result-bar-container">
           <div class="result-bar" style="width: ${(result.confidence * 100).toFixed(0)}%; 
                background-color: ${barColor}">
@@ -295,7 +324,7 @@ async function captureImage() {
         <img src="${img.src}" class="history-img">
         <div class="history-meta">
           <div class="capture-time">${timestamp}</div>
-          <div class="primary-prediction">${analysisResults[0].label.replace('_', ' ')}</div>
+          <div class="primary-prediction">${analysisResults[0].label.replace(/_/g, ' ')}</div>
           <div class="confidence-badge" style="background-color: ${riskColor}">
             ${(analysisResults[0].confidence * 100).toFixed(0)}% confidence
           </div>
