@@ -19,15 +19,16 @@ print(f"Using pattern: {use_pattern}")
 with open(os.path.join(model_dir, 'model.json'), 'r') as f:
     model_json = json.load(f)
 
-# Update weightsManifest to use the correct pattern
+# Update weightsManifest to use the correct pattern with relative paths
 if 'weightsManifest' in model_json:
     shards = []
     
     if use_pattern == 'of3':
-        shards = ['group1-shard1of3.bin', 'group1-shard2of3.bin', 'group1-shard3of3.bin']
+        # Include relative path to model directory
+        shards = ['./model/group1-shard1of3.bin', './model/group1-shard2of3.bin', './model/group1-shard3of3.bin']
     else:
-        shards = ['group1-shard1of5.bin', 'group1-shard2of5.bin', 'group1-shard3of5.bin', 
-                  'group1-shard4of5.bin', 'group1-shard5of5.bin']
+        shards = ['./model/group1-shard1of5.bin', './model/group1-shard2of5.bin', './model/group1-shard3of5.bin', 
+                  './model/group1-shard4of5.bin', './model/group1-shard5of5.bin']
     
     # Update paths
     model_json['weightsManifest'][0]['paths'] = shards
