@@ -10,143 +10,84 @@ let captureReady = false;
 // Fix input shape issue with multiple fallback strategies
 async function loadModelWithFix() {
   try {
-    // First try standard loading
     logEvent("Attempting to load model normally...");
-    const model = await tf.loadLayersModel('model/model.json');
+    // Attempt normal loading with proper weightUrlPrefix.
+    const model = await tf.loadLayersModel('model/model.json', { weightUrlPrefix: 'model/' });
     console.log("Model loaded successfully");
     return model;
   } catch (initialError) {
     console.error("Error loading model:", initialError.message);
     logEvent("Encountered error: " + initialError.message);
-    
-    // Try to fix the input shape issue with direct model.json modification
+
     try {
-      console.log("Attempting to fix model.json...");
-      logEvent("Attempting to fix missing input shape in model.json");
-      
-      // Fetch and parse model.json
+      logEvent("Attempting to fix model.json...");
       const response = await fetch('model/model.json');
       const modelJson = await response.json();
-      
-      // Add proper input shape to model topology
+
+      // Fix the weight paths:
+      // - Remove extra "model/" prefix.
+      // - Replace "of3" with "of5" to match the actual file names.
+      if (modelJson.weightsManifest) {
+        modelJson.weightsManifest.forEach(manifest => {
+          manifest.paths = manifest.paths.map(path => {
+            path = path.replace(/^model\//, '');
+            return path.replace('of3', 'of5');
+          });
+        });
+      }
+
+      // Fix the input layer configuration.
       if (modelJson.modelTopology && modelJson.modelTopology.config) {
-        // Ensure layers array exists
         modelJson.modelTopology.config.layers = modelJson.modelTopology.config.layers || [];
         const layers = modelJson.modelTopology.config.layers;
-        
-        // Find input layer or add one if it doesn't exist
         const inputLayerIndex = layers.findIndex(l => l.class_name === 'InputLayer');
-        
         if (inputLayerIndex >= 0) {
-          // Fix existing input layer
           console.log("Adding input shape to existing InputLayer");
           layers[inputLayerIndex].config = layers[inputLayerIndex].config || {};
           layers[inputLayerIndex].config.batch_input_shape = [null, 224, 224, 3];
-          layers[inputLayerIndex].config.input_shape = [224, 224, 3];
-        } else if (layers.length > 0) {
-          // Add a new input layer
-          console.log("No InputLayer found. Adding new InputLayer");
-          layers.unshift({
-            class_name: "InputLayer",
-            config: {
-              batch_input_shape: [null, 224, 224, 3],
-              dtype: "float32",
-              sparse: false,
-              name: "input_1"
-            },
-            inbound_nodes: [],
-            name: "input_1"
-          });
-          
-          // Make sure first layer knows about input
-          if (layers[1] && !layers[1].inbound_nodes) {
-            layers[1].inbound_nodes = [[["input_1", 0, 0, {}]]];
-          }
+          // Remove the input_shape property if it exists to avoid conflict.
+          delete layers[inputLayerIndex].config.input_shape;
         }
-        
-        // Create a blob URL with the fixed model
-        const blob = new Blob([JSON.stringify(modelJson)], {type: 'application/json'});
-        const fixedModelUrl = URL.createObjectURL(blob);
-        
-        // Load the fixed model
-        logEvent("Loading model with fixed input shape...");
-        const fixedModel = await tf.loadLayersModel(fixedModelUrl);
-        URL.revokeObjectURL(fixedModelUrl); // Clean up
-        
-        console.log("Successfully loaded model with fixed input shape");
-        logEvent("Fixed model input shape issue - model loaded");
-        return fixedModel;
       }
+
+      // Create a blob URL from the fixed model JSON.
+      const blob = new Blob([JSON.stringify(modelJson)], { type: 'application/json' });
+      const fixedModelUrl = URL.createObjectURL(blob);
+
+      logEvent("Loading model with fixed input shape...");
+      const fixedModel = await tf.loadLayersModel(fixedModelUrl, { weightUrlPrefix: 'model/' });
+      URL.revokeObjectURL(fixedModelUrl);
+
+      console.log("Successfully loaded model with fixed input shape");
+      logEvent("Fixed model input shape issue - model loaded");
+      return fixedModel;
     } catch (fixError) {
       console.error("Error fixing model:", fixError.message);
       logEvent("Failed to fix model: " + fixError.message);
-    }
-    
-    // Try approach 2: Create model programmatically
-    try {
-      logEvent("Trying to recreate model architecture programmatically...");
-      
-      // Get class names
-      await loadClassNames();
-      
-      // Create a new model with proper input shape
-      const numClasses = Object.keys(classNames).length || 7; // Default to 7 if class names not available
-      
-      // Create EfficientNetB0 base
-      const baseModel = await tf.loadLayersModel(
-        'https://storage.googleapis.com/tfjs-models/tfjs/efficientnetb0_notop_imagenet/model.json'
-      );
-      baseModel.trainable = false;
-      
-      // Create our own model
-      const input = tf.input({shape: [224, 224, 3]});
-      const output = baseModel.apply(input);
-      const x = tf.layers.globalAveragePooling2d().apply(output);
-      const x2 = tf.layers.batchNormalization().apply(x);
-      const x3 = tf.layers.dense({units: 256, activation: 'relu'}).apply(x2);
-      const x4 = tf.layers.dropout({rate: 0.5}).apply(x3);
-      const x5 = tf.layers.dense({units: 128, activation: 'relu'}).apply(x4);
-      const x6 = tf.layers.dropout({rate: 0.3}).apply(x5);
-      const prediction = tf.layers.dense({units: numClasses, activation: 'softmax'}).apply(x6);
-      
-      const recreatedModel = tf.model({inputs: input, outputs: prediction});
-      
-      // Try to load weights if available
-      try {
-        const weightsResponse = await fetch('model/weights.bin');
-        if (weightsResponse.ok) {
-          logEvent("Loading weights into recreated model...");
-          // This is a simplified example - actual weight loading is more complex
-        }
-      } catch (e) {
-        logEvent("Could not load weights for recreated model");
-      }
-      
-      logEvent("Successfully recreated model architecture");
-      return recreatedModel;
-    } catch (recreateError) {
-      console.error("Recreating model failed:", recreateError.message);
-      logEvent("Failed to recreate model: " + recreateError.message);
-    }
-    
-    // Try loading with relaxed constraints
-    try {
-      console.log("Attempting to load model with strict=false...");
       logEvent("Trying alternate loading method with strict=false");
-      const relaxedModel = await tf.loadLayersModel('model/model.json', {strict: false});
-      console.log("Model loaded with relaxed constraints");
-      logEvent("Model loaded with relaxed constraints");
-      return relaxedModel;
-    } catch (relaxedError) {
-      console.error("Relaxed loading failed:", relaxedError.message);
-      logEvent("Relaxed loading also failed");
+
+      try {
+        const relaxedModel = await tf.loadLayersModel('model/model.json', { weightUrlPrefix: 'model/', strict: false });
+        console.log("Relaxed loading succeeded");
+        return relaxedModel;
+      } catch (relaxedError) {
+        console.error("Relaxed loading failed:", relaxedError.message);
+        logEvent("Relaxed loading also failed");
+        logEvent("WARNING: All loading methods failed - using demonstration mode!");
+
+        const demoModel = createDemonstrationModel();
+        return demoModel;
+      }
     }
-    
-    // Final fallback: create a demo model
-    logEvent("WARNING: All loading methods failed - using demonstration mode!");
-    console.log("Creating demonstration model with simulated predictions");
-    return createDemonstrationModel();
   }
+}
+
+function createDemonstrationModel() {
+  logEvent("Creating demonstration model with simulated predictions");
+  const model = tf.sequential();
+  model.add(tf.layers.flatten({ inputShape: [224, 224, 3] }));
+  model.add(tf.layers.dense({ units: 10, activation: 'softmax' }));
+  return model;
 }
 
 // Helper for loading class names

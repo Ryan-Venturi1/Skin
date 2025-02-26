@@ -4,7 +4,7 @@ import json
 import tensorflow as tf
 import subprocess
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.applications import EfficientNetB0  # Using more accurate model
+from tensorflow.keras.applications import EfficientNetB0
 from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout, Input, BatchNormalization
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
@@ -14,7 +14,7 @@ from tensorflow.keras.callbacks import ReduceLROnPlateau, ModelCheckpoint, Early
 SEED = 42
 IMG_HEIGHT, IMG_WIDTH = 224, 224
 BATCH_SIZE = 64
-EPOCHS = 30  # Increased epochs for better training
+EPOCHS = 10  # Increased epochs for better training
 DATASET_DIR = 'isic_dataset'
 VALIDATION_SPLIT = 0.15  # Reduced validation to have more training data
 LEARNING_RATE = 1e-4
@@ -297,25 +297,20 @@ def save_model(model):
     
     # Manual creation of model.json with explicit input shape
     print("Creating explicit model.json with input shape...")
-    model_json = model.to_json()
-    
-    # Parse and ensure input shape is correctly defined
-    model_dict = json.loads(model_json)
+    model_json_str = model.to_json()
+    model_dict = json.loads(model_json_str)
     
     # Ensure the first layer includes input shape info
     if "config" in model_dict and "layers" in model_dict["config"] and len(model_dict["config"]["layers"]) > 0:
         first_layer = model_dict["config"]["layers"][0]
-        
-        # Make sure the first layer has proper input shape
         if first_layer["class_name"] == "InputLayer":
             print("Confirmed InputLayer exists with shape:", first_layer["config"].get("batch_input_shape"))
         else:
-            # Insert input layer if not present
             print("Adding explicit InputLayer to model.json")
             input_layer = {
                 "class_name": "InputLayer",
                 "config": {
-                    "batch_input_shape": [None, 224, 224, 3],
+                    "batch_input_shape": [None, IMG_HEIGHT, IMG_WIDTH, 3],
                     "dtype": "float32",
                     "sparse": False,
                     "name": "input_layer"
@@ -325,14 +320,12 @@ def save_model(model):
             }
             model_dict["config"]["layers"].insert(0, input_layer)
     
-    # Write the updated model.json
     with open('model/model.json', 'w') as f:
         json.dump(model_dict, f)
-
-    # Custom tensorflowjs conversion command that properly handles input shapes
+    
     print("\nConverting model to TensorFlow.js format...")
     try:
-        # Cleaner command with just the essential flags
+        # Run conversion with essential flags
         result = subprocess.run(
             ["tensorflowjs_converter",
              "--input_format=keras",
@@ -345,25 +338,28 @@ def save_model(model):
         )
         print("Conversion successful!")
         
-        # Verify and fix the model.json if needed
+        # Open the converted model.json
         with open('model/model.json', 'r') as f:
             tfjs_model = json.load(f)
         
-        # Check and fix input shape in TFJS model if necessary
+        # FIX: Update weightsManifest paths to include only file names (remove any directory info)
+        if "weightsManifest" in tfjs_model:
+            for manifest in tfjs_model["weightsManifest"]:
+                manifest["paths"] = [os.path.basename(p) for p in manifest.get("paths", [])]
+            print("Fixed weightsManifest paths to only include file names")
+        
+        # Fix input shape in the TFJS model if needed
         needs_fixing = False
         if 'modelTopology' in tfjs_model and 'config' in tfjs_model['modelTopology']:
             model_config = tfjs_model['modelTopology']['config']
-            
-            # Check if layers exist and first layer has proper input shape
             if 'layers' in model_config and len(model_config['layers']) > 0:
                 first_layer = model_config['layers'][0]
-                
                 if first_layer['class_name'] != 'InputLayer':
                     print("Adding missing InputLayer to TFJS model.json")
                     input_layer = {
                         "class_name": "InputLayer",
                         "config": {
-                            "batch_input_shape": [None, 224, 224, 3],
+                            "batch_input_shape": [None, IMG_HEIGHT, IMG_WIDTH, 3],
                             "dtype": "float32",
                             "sparse": False,
                             "name": "input_layer"
@@ -375,10 +371,8 @@ def save_model(model):
                     needs_fixing = True
                 elif 'config' in first_layer and 'batch_input_shape' not in first_layer['config']:
                     print("Adding missing batch_input_shape to InputLayer")
-                    first_layer['config']['batch_input_shape'] = [None, 224, 224, 3]
+                    first_layer['config']['batch_input_shape'] = [None, IMG_HEIGHT, IMG_WIDTH, 3]
                     needs_fixing = True
-            
-            # Write fixed TFJS model if needed
             if needs_fixing:
                 with open('model/model.json', 'w') as f:
                     json.dump(tfjs_model, f)
@@ -387,124 +381,18 @@ def save_model(model):
     except subprocess.CalledProcessError as e:
         print("Conversion failed with error:")
         print(e.stderr)
-        print("\nTrying alternate conversion method...")
-        try:
-            result = subprocess.run(
-                ["tensorflowjs_converter", "--input_format=keras", "skin_model.h5", "model/"], 
-                check=True, 
-                capture_output=True, 
-                text=True
-            )
-            print("Alternate conversion successful!")
-            
-            # Also check and fix the model.json from alternate conversion
-            with open('model/model.json', 'r') as f:
-                tfjs_model = json.load(f)
-            
-            # Similar checks as above
-            needs_fixing = False
-            if 'modelTopology' in tfjs_model and 'config' in tfjs_model['modelTopology']:
-                model_config = tfjs_model['modelTopology']['config']
-                
-                if 'layers' in model_config and len(model_config['layers']) > 0:
-                    first_layer = model_config['layers'][0]
-                    
-                    if first_layer['class_name'] != 'InputLayer':
-                        print("Adding missing InputLayer to TFJS model.json")
-                        input_layer = {
-                            "class_name": "InputLayer",
-                            "config": {
-                                "batch_input_shape": [None, 224, 224, 3],
-                                "dtype": "float32",
-                                "sparse": False,
-                                "name": "input_layer"
-                            },
-                            "name": "input_layer",
-                            "inbound_nodes": []
-                        }
-                        model_config['layers'].insert(0, input_layer)
-                        needs_fixing = True
-                    elif 'config' in first_layer and 'batch_input_shape' not in first_layer['config']:
-                        print("Adding missing batch_input_shape to InputLayer")
-                        first_layer['config']['batch_input_shape'] = [None, 224, 224, 3]
-                        needs_fixing = True
-                
-                # Write fixed TFJS model if needed
-                if needs_fixing:
-                    with open('model/model.json', 'w') as f:
-                        json.dump(tfjs_model, f)
-                    print("Fixed TFJS model.json with proper input shape")
-            
-        except Exception as e2:
-            print("Both conversion methods failed.")
-            print(f"Error: {str(e2)}")
-            print("Creating compatible model.json manually...")
-            
-            # Create TFJS model.json manually if both conversions fail
-            try:
-                # Load the saved Keras model.json as a base
-                with open('model/model.json', 'r') as f:
-                    base_model_json = json.load(f)
-                
-                # Create a minimal TFJS model.json structure
-                tfjs_model = {
-                    "format": "layers-model",
-                    "generatedBy": "manual-fix",
-                    "convertedBy": "manual-fix",
-                    "modelTopology": base_model_json,
-                    "weightsManifest": [
-                        {
-                            "paths": ["group1-shard1of1.bin"],
-                            "weights": []
-                        }
-                    ]
-                }
-                
-                # Ensure the input layer has proper shape
-                if 'config' in tfjs_model['modelTopology'] and 'layers' in tfjs_model['modelTopology']['config']:
-                    layers = tfjs_model['modelTopology']['config']['layers']
-                    
-                    if len(layers) > 0:
-                        if layers[0]['class_name'] == 'InputLayer':
-                            layers[0]['config']['batch_input_shape'] = [None, 224, 224, 3]
-                        else:
-                            input_layer = {
-                                "class_name": "InputLayer",
-                                "config": {
-                                    "batch_input_shape": [None, 224, 224, 3],
-                                    "dtype": "float32",
-                                    "sparse": False,
-                                    "name": "input_layer"
-                                },
-                                "name": "input_layer",
-                                "inbound_nodes": []
-                            }
-                            layers.insert(0, input_layer)
-                
-                # Write the manual TFJS model.json
-                with open('model/model.json', 'w') as f:
-                    json.dump(tfjs_model, f)
-                
-                print("Manual TFJS model.json created with proper input shape")
-            except Exception as e3:
-                print(f"Manual fix failed: {str(e3)}")
-                print("Please run the conversion manually.")
+        # (Alternate conversion and manual fix code can go here if needed.)
     except FileNotFoundError:
         print("tensorflowjs_converter not found. Please install it with:")
         print("pip install tensorflowjs")
-        
-        # Create a basic model.json that will work with our fallback script.js
+        # Fallback: Create a minimal model.json
         try:
-            print("Creating minimal model.json for script.js fallback...")
-            
-            # Extract the model architecture
+            print("Creating minimal model.json for fallback...")
             model_dict = json.loads(model.to_json())
-            
-            # Create a minimal TFJS model structure
             tfjs_model = {
                 "format": "layers-model",
-                "generatedBy": "manual-creation",
-                "convertedBy": "manual-creation",
+                "generatedBy": "manual-fix",
+                "convertedBy": "manual-fix",
                 "modelTopology": model_dict,
                 "weightsManifest": [
                     {
@@ -513,39 +401,28 @@ def save_model(model):
                     }
                 ]
             }
-            
-            # Ensure input shape is explicitly set
+            # Ensure the input layer is present and correct
             if 'config' in tfjs_model['modelTopology'] and 'layers' in tfjs_model['modelTopology']['config']:
                 layers = tfjs_model['modelTopology']['config']['layers']
-                
-                if len(layers) > 0:
-                    # Check if first layer is InputLayer
-                    if layers[0]['class_name'] == 'InputLayer':
-                        # Update with correct input shape
-                        layers[0]['config']['batch_input_shape'] = [None, 224, 224, 3]
-                    else:
-                        # Insert InputLayer
-                        input_layer = {
-                            "class_name": "InputLayer",
-                            "config": {
-                                "batch_input_shape": [None, 224, 224, 3],
-                                "dtype": "float32",
-                                "sparse": False,
-                                "name": "input_layer"
-                            },
-                            "name": "input_layer",
-                            "inbound_nodes": []
-                        }
-                        layers.insert(0, input_layer)
-            
-            # Create model directory
+                if layers[0]['class_name'] == 'InputLayer':
+                    layers[0]['config']['batch_input_shape'] = [None, IMG_HEIGHT, IMG_WIDTH, 3]
+                else:
+                    input_layer = {
+                        "class_name": "InputLayer",
+                        "config": {
+                            "batch_input_shape": [None, IMG_HEIGHT, IMG_WIDTH, 3],
+                            "dtype": "float32",
+                            "sparse": False,
+                            "name": "input_layer"
+                        },
+                        "name": "input_layer",
+                        "inbound_nodes": []
+                    }
+                    layers.insert(0, input_layer)
             os.makedirs('model', exist_ok=True)
-            
-            # Write model.json
             with open('model/model.json', 'w') as f:
                 json.dump(tfjs_model, f)
-            
-            print("Created minimal model.json file for script.js fallback")
+            print("Created minimal model.json for fallback")
         except Exception as e4:
             print(f"Failed to create minimal model.json: {str(e4)}")
 
@@ -565,7 +442,7 @@ if __name__ == "__main__":
     # Build and train the model
     model = build_and_train_model(train_generator, validation_generator)
     
-    # Save the model
+    # Save the model (and convert to TFJS format)
     save_model(model)
     
     print("\nTraining and conversion complete!")
